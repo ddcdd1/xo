@@ -39,16 +39,16 @@
         h1 { font-size: 24px; margin-bottom: 30px; }
 
         .btn {
-            padding: 15px 30px;
-            font-size: 18px;
+            padding: 12px 20px;
+            font-size: 16px;
             cursor: pointer;
             border: 2px solid var(--grid-color);
             background: #fff;
-            margin: 10px;
+            margin: 5px;
             font-weight: bold;
             border-radius: 12px;
             -webkit-tap-highlight-color: transparent;
-            transition: transform 0.1s;
+            transition: transform 0.1s, background 0.2s;
         }
 
         .btn:active { transform: scale(0.95); }
@@ -61,7 +61,7 @@
         }
 
         .status {
-            font-size: 22px;
+            font-size: 20px;
             margin-bottom: 15px;
             font-weight: 700;
         }
@@ -88,27 +88,35 @@
             font-size: min(8vw, 30px);
             font-weight: 900;
             cursor: pointer;
+            transition: opacity 0.2s;
         }
 
         .cell.x { color: var(--x-color); }
         .cell.o { color: var(--o-color); }
+        
+        /* Стиль для черновика */
+        .cell.draft { opacity: 0.35; }
 
         .controls {
-            margin-top: 20px;
+            margin-top: 15px;
             display: flex;
             justify-content: center;
-            gap: 10px;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 0 10px;
         }
 
         .undo-btn { background: #f0f0f0; border-color: #ccc; }
+        .draft-btn { background: #e0f7fa; border-color: #00acc1; color: #00838f; }
+        .draft-btn.active { background: #00acc1; color: #fff; border-color: #006064; }
         .restart-btn { background: #333; color: #fff; }
 
         #winner-msg {
             color: #28a745;
             font-weight: bold;
-            font-size: 20px;
-            margin-top: 15px;
-            height: 24px;
+            font-size: 18px;
+            margin-top: 10px;
+            height: 22px;
         }
     </style>
 </head>
@@ -126,23 +134,22 @@
         <div id="winner-msg"></div>
         <div class="controls">
             <button class="btn undo-btn" id="undo-move">↩ Отмена</button>
+            <button class="btn draft-btn" id="draft-mode-btn">📝 Черновик: ВЫКЛ</button>
             <button class="btn restart-btn" id="reset-game">Заново</button>
         </div>
     </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // Безопасная инициализация Telegram Web App
             let tg = null;
             if (window.Telegram && window.Telegram.WebApp) {
                 tg = window.Telegram.WebApp;
                 try {
                     tg.expand();
                     tg.ready();
-                } catch (e) { console.error("Ошибка инициализации TG:", e); }
+                } catch (e) { console.error("Ошибка TG:", e); }
             }
 
-            // Безопасная функция вибрации (не ломает код, если запущено на ПК)
             function vibrate(type) {
                 if (!tg || !tg.HapticFeedback) return;
                 try {
@@ -151,7 +158,7 @@
                     } else {
                         tg.HapticFeedback.impactOccurred(type);
                     }
-                } catch (e) {} // Игнорируем ошибку, если устройство не поддерживает
+                } catch (e) {}
             }
 
             const ROWS = 7;
@@ -160,13 +167,17 @@
             let currentPlayer = 'X';
             let gameActive = false;
             let moveHistory = [];
+            
+            // Переменные для режима черновика
+            let isDraftMode = false;
+            let preDraftState = null;
 
-            // Кэшируем элементы
             const setupScreen = document.getElementById('setup-screen');
             const gameContainer = document.getElementById('game-container');
             const boardEl = document.getElementById('board');
             const turnIndicator = document.getElementById('turn-indicator');
             const winnerMsg = document.getElementById('winner-msg');
+            const draftBtn = document.getElementById('draft-mode-btn');
 
             function initBoard() {
                 board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
@@ -178,118 +189,8 @@
                 initBoard();
                 moveHistory = [];
                 gameActive = true;
-                winnerMsg.textContent = '';
+                isDraftMode = false;
+                preDraftState = null;
                 
-                setupScreen.style.display = 'none';
-                gameContainer.style.display = 'block';
-                
-                updateStatus();
-                render();
-            }
-
-            function render() {
-                boardEl.innerHTML = '';
-                for (let r = 0; r < ROWS; r++) {
-                    for (let c = 0; c < COLS; c++) {
-                        const cell = document.createElement('div');
-                        cell.className = 'cell' + (board[r][c] ? ' ' + board[r][c].toLowerCase() : '');
-                        cell.textContent = board[r][c] || '';
-                        
-                        // Безопасное добавление обработчика клика
-                        cell.addEventListener('click', () => handleMove(c));
-                        boardEl.appendChild(cell);
-                    }
-                }
-            }
-
-            function handleMove(col) {
-                if (!gameActive) return;
-
-                let row = -1;
-                for (let r = ROWS - 1; r >= 0; r--) {
-                    if (!board[r][col]) {
-                        row = r;
-                        break;
-                    }
-                }
-
-                if (row === -1) return; // Столбец заполнен
-
-                vibrate('light');
-
-                board[row][col] = currentPlayer;
-                moveHistory.push({row, col, player: currentPlayer});
-                
-                if (checkWin(row, col)) {
-                    vibrate('success');
-                    gameActive = false;
-                    winnerMsg.textContent = `Победили ${currentPlayer === 'X' ? 'Крестики' : 'Нолики'}!`;
-                    turnIndicator.textContent = 'Игра окончена';
-                    turnIndicator.style.color = '#888';
-                } else if (moveHistory.length === ROWS * COLS) {
-                    gameActive = false;
-                    winnerMsg.textContent = 'Ничья!';
-                    turnIndicator.textContent = 'Игра окончена';
-                } else {
-                    currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
-                    updateStatus();
-                }
-                render();
-            }
-
-            function checkWin(r, c) {
-                const directions = [[0,1], [1,0], [1,1], [1,-1]];
-                for (let [dr, dc] of directions) {
-                    let count = 1;
-                    count += scan(r, c, dr, dc);
-                    count += scan(r, c, -dr, -dc);
-                    if (count >= 5) return true;
-                }
-                return false;
-            }
-
-            function scan(r, c, dr, dc) {
-                let count = 0;
-                let currR = r + dr;
-                let currC = c + dc;
-                while (currR >= 0 && currR < ROWS && currC >= 0 && currC < COLS && board[currR][currC] === currentPlayer) {
-                    count++;
-                    currR += dr;
-                    currC += dc;
-                }
-                return count;
-            }
-
-            function updateStatus() {
-                turnIndicator.textContent = `Ход: ${currentPlayer === 'X' ? 'Крестики' : 'Нолики'}`;
-                turnIndicator.style.color = currentPlayer === 'X' ? 'var(--x-color)' : 'var(--o-color)';
-            }
-
-            function undo() {
-                if (moveHistory.length === 0) return;
-                vibrate('medium');
-                const last = moveHistory.pop();
-                board[last.row][last.col] = null;
-                currentPlayer = last.player;
-                gameActive = true;
-                winnerMsg.textContent = '';
-                updateStatus();
-                render();
-            }
-
-            function resetGame() {
-                vibrate('heavy');
-                gameContainer.style.display = 'none';
-                setupScreen.style.display = 'flex';
-                gameActive = false;
-            }
-
-            // Навешиваем события на кнопки
-            document.getElementById('btn-x').addEventListener('click', () => start('X'));
-            document.getElementById('btn-o').addEventListener('click', () => start('O'));
-            document.getElementById('undo-move').addEventListener('click', undo);
-            document.getElementById('reset-game').addEventListener('click', resetGame);
-        });
-    </script>
-</body>
-</html>
+                draftBtn.textContent = '📝 Черновик: ВЫКЛ';
+                draftBtn.classList.remove
