@@ -23,20 +23,23 @@
             align-items: center;
             justify-content: center;
             min-height: 100vh;
-            overflow: hidden; /* Чтобы не было случайных скроллов */
+            overflow: hidden;
             touch-action: manipulation;
+            user-select: none;
         }
 
-        /* Экран выбора */
         #setup-screen {
             text-align: center;
             padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         h1 { font-size: 24px; margin-bottom: 30px; }
 
         .btn {
-            padding: 15px 25px;
+            padding: 15px 30px;
             font-size: 18px;
             cursor: pointer;
             border: 2px solid var(--grid-color);
@@ -45,9 +48,11 @@
             font-weight: bold;
             border-radius: 12px;
             -webkit-tap-highlight-color: transparent;
+            transition: transform 0.1s;
         }
 
-        /* Игровой контейнер */
+        .btn:active { transform: scale(0.95); }
+
         #game-container {
             display: none;
             width: 100%;
@@ -56,12 +61,11 @@
         }
 
         .status {
-            font-size: 20px;
-            margin-bottom: 10px;
+            font-size: 22px;
+            margin-bottom: 15px;
             font-weight: 700;
         }
 
-        /* Адаптивная сетка */
         .grid {
             display: grid;
             grid-template-columns: repeat(9, 1fr);
@@ -69,9 +73,10 @@
             gap: 1px;
             background-color: var(--grid-color);
             border: 2px solid var(--grid-color);
-            /* Поле занимает 95% ширины экрана */
             width: 95vw;
+            max-width: 450px;
             height: calc(95vw * 7 / 9); 
+            max-height: calc(450px * 7 / 9);
             margin: 0 auto;
         }
 
@@ -80,8 +85,9 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: min(8vw, 35px); /* Размер шрифта зависит от экрана */
+            font-size: min(8vw, 30px);
             font-weight: 900;
+            cursor: pointer;
         }
 
         .cell.x { color: var(--x-color); }
@@ -94,13 +100,14 @@
             gap: 10px;
         }
 
-        .undo-btn { background: #eee; border-color: #ccc; }
+        .undo-btn { background: #f0f0f0; border-color: #ccc; }
         .restart-btn { background: #333; color: #fff; }
 
         #winner-msg {
             color: #28a745;
             font-weight: bold;
-            margin-top: 10px;
+            font-size: 20px;
+            margin-top: 15px;
             height: 24px;
         }
     </style>
@@ -124,128 +131,165 @@
     </div>
 
     <script>
-        const tg = window.Telegram.WebApp;
-        tg.expand(); // Разворачиваем приложение
+        document.addEventListener('DOMContentLoaded', () => {
+            // Безопасная инициализация Telegram Web App
+            let tg = null;
+            if (window.Telegram && window.Telegram.WebApp) {
+                tg = window.Telegram.WebApp;
+                try {
+                    tg.expand();
+                    tg.ready();
+                } catch (e) { console.error("Ошибка инициализации TG:", e); }
+            }
 
-        const ROWS = 7;
-        const COLS = 9;
-        let board = [];
-        let currentPlayer = 'X';
-        let gameActive = false;
-        let moveHistory = [];
+            // Безопасная функция вибрации (не ломает код, если запущено на ПК)
+            function vibrate(type) {
+                if (!tg || !tg.HapticFeedback) return;
+                try {
+                    if (type === 'success') {
+                        tg.HapticFeedback.notificationOccurred('success');
+                    } else {
+                        tg.HapticFeedback.impactOccurred(type);
+                    }
+                } catch (e) {} // Игнорируем ошибку, если устройство не поддерживает
+            }
 
-        function initBoard() {
-            board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
-        }
+            const ROWS = 7;
+            const COLS = 9;
+            let board = [];
+            let currentPlayer = 'X';
+            let gameActive = false;
+            let moveHistory = [];
 
-        function render() {
+            // Кэшируем элементы
+            const setupScreen = document.getElementById('setup-screen');
+            const gameContainer = document.getElementById('game-container');
             const boardEl = document.getElementById('board');
-            boardEl.innerHTML = '';
-            for (let r = 0; r < ROWS; r++) {
-                for (let c = 0; c < COLS; c++) {
-                    const cell = document.createElement('div');
-                    cell.className = 'cell' + (board[r][c] ? ' ' + board[r][c].toLowerCase() : '');
-                    cell.textContent = board[r][c] || '';
-                    cell.onclick = () => handleMove(c);
-                    boardEl.appendChild(cell);
-                }
-            }
-        }
+            const turnIndicator = document.getElementById('turn-indicator');
+            const winnerMsg = document.getElementById('winner-msg');
 
-        function handleMove(col) {
-            if (!gameActive) return;
-
-            let row = -1;
-            for (let r = ROWS - 1; r >= 0; r--) {
-                if (!board[r][col]) {
-                    row = r;
-                    break;
-                }
+            function initBoard() {
+                board = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
             }
 
-            if (row === -1) return;
-
-            // Вибрация при каждом ходе (легкий удар)
-            tg.HapticFeedback.impactOccurred('light');
-
-            board[row][col] = currentPlayer;
-            moveHistory.push({row, col, player: currentPlayer});
-            
-            if (checkWin(row, col)) {
-                // Вибрация при победе
-                tg.HapticFeedback.notificationOccurred('success');
-                gameActive = false;
-                document.getElementById('winner-msg').textContent = `Победа ${currentPlayer}!`;
-                document.getElementById('turn-indicator').textContent = 'Финиш';
-            } else {
-                currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+            function start(player) {
+                vibrate('medium');
+                currentPlayer = player;
+                initBoard();
+                moveHistory = [];
+                gameActive = true;
+                winnerMsg.textContent = '';
+                
+                setupScreen.style.display = 'none';
+                gameContainer.style.display = 'block';
+                
                 updateStatus();
+                render();
             }
-            render();
-        }
 
-        function checkWin(r, c) {
-            const directions = [[0,1], [1,0], [1,1], [1,-1]];
-            for (let [dr, dc] of directions) {
-                let count = 1;
-                count += scan(r, c, dr, dc);
-                count += scan(r, c, -dr, -dc);
-                if (count >= 5) return true;
+            function render() {
+                boardEl.innerHTML = '';
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        const cell = document.createElement('div');
+                        cell.className = 'cell' + (board[r][c] ? ' ' + board[r][c].toLowerCase() : '');
+                        cell.textContent = board[r][c] || '';
+                        
+                        // Безопасное добавление обработчика клика
+                        cell.addEventListener('click', () => handleMove(c));
+                        boardEl.appendChild(cell);
+                    }
+                }
             }
-            return false;
-        }
 
-        function scan(r, c, dr, dc) {
-            let count = 0;
-            let currR = r + dr;
-            let currC = c + dc;
-            while (currR >= 0 && currR < ROWS && currC >= 0 && currC < COLS && board[currR][currC] === currentPlayer) {
-                count++;
-                currR += dr;
-                currC += dc;
+            function handleMove(col) {
+                if (!gameActive) return;
+
+                let row = -1;
+                for (let r = ROWS - 1; r >= 0; r--) {
+                    if (!board[r][col]) {
+                        row = r;
+                        break;
+                    }
+                }
+
+                if (row === -1) return; // Столбец заполнен
+
+                vibrate('light');
+
+                board[row][col] = currentPlayer;
+                moveHistory.push({row, col, player: currentPlayer});
+                
+                if (checkWin(row, col)) {
+                    vibrate('success');
+                    gameActive = false;
+                    winnerMsg.textContent = `Победили ${currentPlayer === 'X' ? 'Крестики' : 'Нолики'}!`;
+                    turnIndicator.textContent = 'Игра окончена';
+                    turnIndicator.style.color = '#888';
+                } else if (moveHistory.length === ROWS * COLS) {
+                    gameActive = false;
+                    winnerMsg.textContent = 'Ничья!';
+                    turnIndicator.textContent = 'Игра окончена';
+                } else {
+                    currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
+                    updateStatus();
+                }
+                render();
             }
-            return count;
-        }
 
-        function updateStatus() {
-            const el = document.getElementById('turn-indicator');
-            el.textContent = `Ход: ${currentPlayer === 'X' ? 'Крестики' : 'Нолики'}`;
-            el.style.color = currentPlayer === 'X' ? 'var(--x-color)' : 'var(--o-color)';
-        }
+            function checkWin(r, c) {
+                const directions = [[0,1], [1,0], [1,1], [1,-1]];
+                for (let [dr, dc] of directions) {
+                    let count = 1;
+                    count += scan(r, c, dr, dc);
+                    count += scan(r, c, -dr, -dc);
+                    if (count >= 5) return true;
+                }
+                return false;
+            }
 
-        function undo() {
-            if (moveHistory.length === 0) return;
-            tg.HapticFeedback.impactOccurred('medium');
-            const last = moveHistory.pop();
-            board[last.row][last.col] = null;
-            currentPlayer = last.player;
-            gameActive = true;
-            document.getElementById('winner-msg').textContent = '';
-            updateStatus();
-            render();
-        }
+            function scan(r, c, dr, dc) {
+                let count = 0;
+                let currR = r + dr;
+                let currC = c + dc;
+                while (currR >= 0 && currR < ROWS && currC >= 0 && currC < COLS && board[currR][currC] === currentPlayer) {
+                    count++;
+                    currR += dr;
+                    currC += dc;
+                }
+                return count;
+            }
 
-        // Слушатели кнопок
-        document.getElementById('btn-x').onclick = () => start('X');
-        document.getElementById('btn-o').onclick = () => start('O');
-        document.getElementById('undo-move').onclick = undo;
-        document.getElementById('reset-game').onclick = () => {
-            tg.HapticFeedback.impactOccurred('heavy');
-            location.reload();
-        };
+            function updateStatus() {
+                turnIndicator.textContent = `Ход: ${currentPlayer === 'X' ? 'Крестики' : 'Нолики'}`;
+                turnIndicator.style.color = currentPlayer === 'X' ? 'var(--x-color)' : 'var(--o-color)';
+            }
 
-        function start(player) {
-            tg.HapticFeedback.impactOccurred('medium');
-            currentPlayer = player;
-            initBoard();
-            gameActive = true;
-            document.getElementById('setup-screen').style.display = 'none';
-            document.getElementById('game-container').style.display = 'block';
-            updateStatus();
-            render();
-        }
+            function undo() {
+                if (moveHistory.length === 0) return;
+                vibrate('medium');
+                const last = moveHistory.pop();
+                board[last.row][last.col] = null;
+                currentPlayer = last.player;
+                gameActive = true;
+                winnerMsg.textContent = '';
+                updateStatus();
+                render();
+            }
 
-        tg.ready();
+            function resetGame() {
+                vibrate('heavy');
+                gameContainer.style.display = 'none';
+                setupScreen.style.display = 'flex';
+                gameActive = false;
+            }
+
+            // Навешиваем события на кнопки
+            document.getElementById('btn-x').addEventListener('click', () => start('X'));
+            document.getElementById('btn-o').addEventListener('click', () => start('O'));
+            document.getElementById('undo-move').addEventListener('click', undo);
+            document.getElementById('reset-game').addEventListener('click', resetGame);
+        });
     </script>
 </body>
 </html>
